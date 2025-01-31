@@ -1,17 +1,12 @@
 #include "ttyPos.h"
 
-#define DRV_VERSION	"303"
-#define VERSION_DATE    "2014.10.13_01"
-#define MAX_RETRY_S	5
-#define DRV_NAME	"ttyPos"
+#define DRV_VERSION		"1.0.1"
+#define VERSION_DATE    "2025.01.30"
+#define MAX_RETRY_S		5
+#define DRV_NAME		"ttyPos"
 
 static struct tty_pos *pdx_table[POS_TTY_MINORS];
-
-#ifdef LINUX_VERSION_CODE
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
-static struct tty_port	pos_port[POS_TTY_MINORS];
-#endif
-#endif
+static struct tty_port pos_port[POS_TTY_MINORS];
 
 static unsigned char ResetPipePort(struct tty_pos *dev)
 {
@@ -118,25 +113,9 @@ static int SendAndWaitUrb(struct tty_pos *dev)
 	retval = wait_event_timeout(pdx->urb_wait,
 	    (atomic_read(&pdx->urb_done) == 1), pdx->timeout_jiffies);
 	if (retval == 0) {
-		/* INFO("URB TIMEOUT\n"); */
-
-		if (atomic_read(&pdx->urb_done) == 0) {	/* urb is not done */
-#if 0
-			usb_unlink_urb(pdx->urb);
-			printk(KERN_ALERT "usb_done: %d; %d\n",
-			    (atomic_read(&pdx->urb_done) == 1),
-			    /* pdx->urb_done, */ usb_unlink_urb(pdx->urb));
-#endif
+		if (atomic_read(&pdx->urb_done) == 0) {
 			usb_kill_urb(pdx->urb);
-#if 0
-			wait_event(pdx->urb_wait,
-			    (atomic_read(&pdx->urb_done) == 1));
-#endif
 		}
-#if 0
-		INFO("urb->status: %d, %d\n", pdx->urb->status,
-		    pdx->urb->actual_length);
-#endif
 		retval = 2;
 		goto exit;
 	}
@@ -147,10 +126,6 @@ static int SendAndWaitUrb(struct tty_pos *dev)
 	}
 	else {
 		retval = 0;
-#if 0
-		printk(KERN_INFO "Use jiffies: %d", pdx->timeout_jiffies -
-		    retval);
-#endif
 	}
 
 	if (pdx->urb->status) {
@@ -344,13 +319,7 @@ static int ThreadCallBack(void *data)
 			if (rlen > sizeof(pdx->BioPack->Data)) {
 				rlen = sizeof(pdx->BioPack->Data);
 			}
-#ifdef LINUX_VERSION_CODE
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
-            rlen = tty_buffer_request_room(&pos_port[pdx->devIndex],rlen);
-#else
-			rlen = tty_buffer_request_room(tty, rlen);
-#endif
-#endif
+			rlen = tty_buffer_request_room(&pos_port[pdx->devIndex], rlen);
 			if (!loops) {
 				pdx->SeqCount = (pdx->SeqCount + 1) & 0x0f;
 			}
@@ -414,15 +383,8 @@ static int ThreadCallBack(void *data)
 				}
 			}
 #endif
-#ifdef LINUX_VERSION_CODE
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
-            tty_insert_flip_string(&pos_port[pdx->devIndex], pdx->BioPack->Data, rlen);
+			tty_insert_flip_string(&pos_port[pdx->devIndex], pdx->BioPack->Data, rlen);
 			tty_flip_buffer_push(&pos_port[pdx->devIndex]);
-#else            
-			tty_insert_flip_string(tty, pdx->BioPack->Data, rlen);
-			tty_flip_buffer_push(tty);
-#endif
-#endif
 			pdx->BioDevState.TxLeft -= rlen;
 #if 0
 			printk(KERN_ALERT "%02X, RN: %d\n", pdx->SeqCount,
@@ -563,8 +525,8 @@ static int ThreadCallBack(void *data)
 	}
 
 	pdx->ThreadState = THREAD_STOPPED;
-	complete(&pdx->ThreadExit_completion);
-	do_exit(0);
+	kthread_complete_and_exit(NULL, 0);
+	return 0;
 }
 
 static void pos_delete(struct kref *kref)
@@ -590,69 +552,40 @@ static void pos_delete(struct kref *kref)
 
 static int pos_open(struct tty_struct *tty, struct file *filp)
 {
-	struct tty_pos *pdx;
-	
-    if(tty==NULL)return USB_ERR_MEM_SYSTEM;
-    if(tty->index >= POS_TTY_MINORS || tty->index<0)return USB_ERR_MEM_SYSTEM;
+    struct tty_pos *pdx;
     
-//    INFO("%s index:%d\n",__func__,tty->index);
-	pdx = pdx_table[tty->index];
-	if (pdx == NULL)
-		return USB_ERR_DEV_ABSENT;
+    if(tty == NULL) return USB_ERR_MEM_SYSTEM;
+    if(tty->index >= POS_TTY_MINORS || tty->index < 0) return USB_ERR_MEM_SYSTEM;
+    
+    pdx = pdx_table[tty->index];
+    if (pdx == NULL)
+        return USB_ERR_DEV_ABSENT;
 
-	if (THREAD_IS_RUNNING(pdx->ThreadState)) {
-		return USB_ERR_BUSY;
-	}
+    if (THREAD_IS_RUNNING(pdx->ThreadState)) {
+        return USB_ERR_BUSY;
+    }
 
-	tty->driver_data = pdx;
-	pdx->tty = tty;
+    tty->driver_data = pdx;
+    pdx->tty = tty;
 
-#ifdef LINUX_VERSION_CODE
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
     tty_port_tty_set(&pos_port[pdx->devIndex], tty);
-#endif
-#endif
 
-	kref_get(&pdx->kref);
+    kref_get(&pdx->kref);
 
-#ifdef LINUX_VERSION_CODE
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
     reinit_completion(&pdx->ThreadExit_completion);
-#else
-	INIT_COMPLETION(pdx->ThreadExit_completion);
-#endif
-#endif
-	pdx->ThreadState = THREAD_CREATED;
-#ifdef LINUX_VERSION_CODE
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
-{
-    struct task_struct *thread;
-    thread = kthread_run(ThreadCallBack,(struct tty_pos *)pdx,"ThreadCallBack");
-    if (IS_ERR(thread))
-    {
-		ERR("FAILED TO CREATE KERNEL THREAD!\n");
-		pdx->ThreadState = THREAD_INIT;
-		kref_put(&pdx->kref, pos_delete);
-		return USB_ERR_RC_SYSTEM;
-	}
-}
-#else
-{
-    pid_t pid;
-	pid = kernel_thread(ThreadCallBack, (struct tty_pos *)pdx,
-	    CLONE_FS | CLONE_FILES);
-	if (pid < 0) {
-		ERR("FAILED TO CREATE KERNEL THREAD!\n");
-		pdx->ThreadState = THREAD_INIT;
-		kref_put(&pdx->kref, pos_delete);
-		return USB_ERR_RC_SYSTEM;
-	}
-}
-#endif
-#endif
+    pdx->ThreadState = THREAD_CREATED;
 
-	pdx->filp = filp;
-	return 0;
+    struct task_struct *thread;
+    thread = kthread_run(ThreadCallBack, (struct tty_pos *)pdx, "ThreadCallBack");
+    if (IS_ERR(thread)) {
+        ERR("FAILED TO CREATE KERNEL THREAD!\n");
+        pdx->ThreadState = THREAD_INIT;
+        kref_put(&pdx->kref, pos_delete);
+        return USB_ERR_RC_SYSTEM;
+    }
+
+    pdx->filp = filp;
+    return 0;
 }
 
 static void pos_close(struct tty_struct *tty, struct file *filp)
@@ -676,45 +609,44 @@ static void pos_close(struct tty_struct *tty, struct file *filp)
     //tty_ldisc_flush(tty);
 }
 
-static int pos_write(struct tty_struct *tty, const unsigned char *buf,
-    int count)
+static ssize_t pos_write(struct tty_struct *tty, const unsigned char *buf, size_t count)
 {
-	struct tty_pos *pdx = tty->driver_data;
-	unsigned int wn, i;
-	int retval;
+    struct tty_pos *pdx = tty->driver_data;
+    ssize_t retval = 0;
+    unsigned int wlen, i;
+    
+    if (!pdx)
+        return USB_ERR_NOT_OPEN;
 
-	if (!pdx)
-		return USB_ERR_NOT_OPEN;
+    if (!THREAD_IS_RUNNING(pdx->ThreadState)) {
+        retval = USB_ERR_INVALID;
+        goto exit;
+    }
 
-	if (!THREAD_IS_RUNNING(pdx->ThreadState)) {
-		retval = USB_ERR_INVALID;
-		goto exit;
-	}
+    if (count == 0) {
+        retval = 0;
+        goto exit;
+    }
 
-	if (count == 0) {
-		retval = 0;
-		goto exit;
-	}
+    wlen = GET_SPACE_POOL(pdx->TxPool);
+    if (wlen >= count) {
+        wlen = count;
+    }
+    else
+        return USB_ERR_BUF;
 
-	wn = GET_SPACE_POOL(pdx->TxPool);
-	if (wn >= count) {
-		wn = count;
-	}
-	else
-		return USB_ERR_BUF;
+    for (i = 0; i < wlen; i++) {
+        pdx->TxPool.Buffer[(pdx->TxPool.WritePos + i) % POOL_SIZE] =
+            buf[i];
+    }
 
-	for (i = 0; i < wn; i++) {
-		pdx->TxPool.Buffer[(pdx->TxPool.WritePos + i) % POOL_SIZE] =
-		    buf[i];
-	}
+    pdx->TxPool.WritePos = (pdx->TxPool.WritePos + wlen) % POOL_SIZE;
+    retval = wlen;
 
-	pdx->TxPool.WritePos = (pdx->TxPool.WritePos + wn) % POOL_SIZE;
-	retval = wn;
-
-	atomic_set(&pdx->write_flag, 1);
-	wake_up(&pdx->write_wait);
+    atomic_set(&pdx->write_flag, 1);
+    wake_up(&pdx->write_wait);
  exit:
-	return retval;
+    return retval;
 }
 
 static unsigned int pos_write_room(struct tty_struct *tty)
@@ -728,13 +660,10 @@ static unsigned int pos_write_room(struct tty_struct *tty)
 	room = GET_SPACE_POOL(pdx->TxPool);
 	return room;
 }
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
-static int pos_ioctl(struct tty_struct *tty, struct file *filp,
-    unsigned int cmd, unsigned long arg)
-#else
+
 static int pos_ioctl(struct tty_struct *tty, unsigned int cmd,
     unsigned long arg)
-#endif    
+  
 {
 	struct tty_pos *pdx = tty->driver_data;
 
@@ -760,111 +689,20 @@ static int pos_ioctl(struct tty_struct *tty, unsigned int cmd,
 #define RELEVANT_IFLAG(iflag) \
 	((iflag) & (IGNBRK | BRKINT | IGNPAR | PARMRK | INPCK))
 
-static void pos_set_termios(struct tty_struct *tty,
-    struct ktermios *old_termios)
+static void pos_set_termios(struct tty_struct *tty, const struct ktermios *old_termios)
 {
-	unsigned int cflag;
+    unsigned int cflag;
 
-#ifdef LINUX_VERSION_CODE
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
     cflag = tty->termios.c_cflag;
-#else
-	cflag = tty->termios->c_cflag;
-#endif
-#endif
-	/* check that they really want us to change something */
-	if (old_termios) {
-		if ((cflag == old_termios->c_cflag) &&
-#ifdef LINUX_VERSION_CODE
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
+
+    /* check that they really want us to change something */
+    if (old_termios) {
+        if ((cflag == old_termios->c_cflag) &&
             (RELEVANT_IFLAG(tty->termios.c_iflag) ==
-#else            
-		    (RELEVANT_IFLAG(tty->termios->c_iflag) ==
-#endif
-#endif
-		    RELEVANT_IFLAG(old_termios->c_iflag))) {
-#if 0
-			INFO(" - nothing to change...\n");
-#endif
-			return;
-		}
-	}
-#if 0
-	/* get the byte size */
-	switch (cflag & CSIZE) {
-	case CS5:
-		INFO(" - data bits = 5\n");
-		break;
-	case CS6:
-		INFO(" - data bits = 6\n");
-		break;
-	case CS7:
-		INFO(" - data bits = 7\n");
-		break;
-	default:
-	case CS8:
-		INFO(" - data bits = 8\n");
-		break;
-	}
-
-	/* determine the parity */
-	if (cflag & PARENB) {
-		if (cflag & PARODD) {
-			INFO(" - parity = odd\n");
-		}
-		else {
-			INFO(" - parity = even\n");
-		}
-	}
-	else {
-		INFO(" - parity = none\n");
-	}
-
-	/* figure out the stop bits requested */
-	if (cflag & CSTOPB) {
-		INFO(" - stop bits = 2\n");
-	}
-	else {
-		INFO(" - stop bits = 1\n");
-	}
-
-	/* figure out the hardware flow control settings */
-	if (cflag & CRTSCTS) {
-		INFO(" - RTS/CTS is enabled\n");
-	}
-	else {
-		INFO(" - RTS/CTS is disabled\n");
-	}
-
-	/* determine software flow control.
-	 * if we are implementing XON/XOFF, set the start and
-	 * stop character in the device */
-	if (I_IXOFF(tty) || I_IXON(tty)) {
-		unsigned char stop_char = STOP_CHAR(tty);
-		unsigned char start_char = START_CHAR(tty);
-
-		/* if we are implementing INBOUND XON/XOFF */
-		if (I_IXOFF(tty)) {
-			INFO(" - INBOUND XON/XOFF is enabled, "
-			    "XON = %2x, XOFF = %2x", start_char, stop_char);
-		}
-		else {
-			INFO(" - INBOUND XON/XOFF is disabled");
-		}
-
-		/* if we are implementing OUTBOUND XON/XOFF */
-		if (I_IXON(tty)) {
-			INFO(" - OUTBOUND XON/XOFF is enabled, "
-			    "XON = %2x, XOFF = %2x", start_char, stop_char);
-		}
-		else {
-			INFO(" - OUTBOUND XON/XOFF is disabled");
-		}
-	}
-
-	/* get the baud rate wanted */
-	INFO(" - baud rate = %d\n", tty_get_baud_rate(tty));
-#endif
+            RELEVANT_IFLAG(old_termios->c_iflag))) {
+            return;
+        }
+    }
 }
 
 static void pos_throttle(struct tty_struct *tty)
@@ -916,18 +754,11 @@ static unsigned int pos_chars_in_buffer(struct tty_struct *tty)
 #define MSR_RI		0x20
 #define MSR_DSR		0x40
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
-static int pos_tiocmget(struct tty_struct *tty, struct file *filp)
-#else
 static int pos_tiocmget(struct tty_struct *tty)
-#endif
 {
 	struct tty_pos *pdx = tty->driver_data;
 	unsigned int msr, mcr, result;
 
-#if 0
-	INFO("pos_tiocmget\n");
-#endif
 	if (!pdx)
 		return -ENODEV;
 
@@ -945,13 +776,9 @@ static int pos_tiocmget(struct tty_struct *tty)
 	return result;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
-static int pos_tiocmset(struct tty_struct *tty, struct file *filp,
-    unsigned int set, unsigned int clear)
-#else
 static int pos_tiocmset(struct tty_struct *tty, unsigned int set, 
     unsigned int clear)
-#endif    
+   
 {
 	struct tty_pos *pdx = tty->driver_data;
 	unsigned int mcr;
@@ -1022,8 +849,9 @@ static int pos_usb_probe(struct usb_interface *interface,
 	}
 
 	pdx->BioPack = kzalloc(sizeof(*pdx->BioPack), GFP_ATOMIC);
-	if (!pdx) {
+	if (!pdx->BioPack) {
 		ERR("OUT OF MEMORY BioPack\n");
+		kfree(pdx);
 		return -ENOMEM;
 	}
 
@@ -1069,17 +897,13 @@ static int pos_usb_probe(struct usb_interface *interface,
 
 	if (!(pdx->bulk_in_epAddr && pdx->bulk_out_epAddr)) {
 		ERR("COULD NOT FIND BOTH BULK-IN AND BULK-OUT ENDPOINT\n");
+		retval = -ENODEV;
+		goto error;
 	}
 
 	usb_set_intfdata(interface, pdx);
-#ifdef LINUX_VERSION_CODE
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
-    tty_port_register_device(&pos_port[pdx->devIndex], pos_tty_driver,
-			pdx->devIndex, NULL);
-#else
-    tty_register_device(pos_tty_driver, pdx->devIndex, NULL);
-#endif
-#endif
+	tty_port_register_device(&pos_port[pdx->devIndex], pos_tty_driver,
+			pdx->devIndex, &interface->dev);
 
     dev_info(&interface->dev,
                 "USB POS device now attached to PosUsb-%d",
@@ -1099,9 +923,6 @@ static void pos_usb_disconnect(struct usb_interface *interface)
 {
 	struct tty_pos *pdx;
 
-#if 0
-	INFO("++pos_disconnect\n");
-#endif
 	pdx = usb_get_intfdata(interface);
 	if (pdx == NULL)
 		return;
@@ -1110,28 +931,15 @@ static void pos_usb_disconnect(struct usb_interface *interface)
 
 	if (pdx->ThreadState == THREAD_CREATED) {
 		pdx->ThreadState = THREAD_CLOSE;
-#if 0        
-		INFO("Wait thread exit\n");
-#endif        
 		wait_for_completion(&pdx->ThreadExit_completion);
-#if 0        
-		INFO("Wait thread exit success!\n");
-#endif    
 	}
 	pdx->ThreadState = THREAD_INIT;
 
 	usb_set_intfdata(interface, NULL);
 
-#if 0
-	usb_deregister_dev(interface, &pos_class);
-#endif
-
 	pdx->interface = NULL;
 
 	kref_put(&pdx->kref, pos_delete);
-#if 0
-	INFO("--pos_disconnect\n");
-#endif
 }
 
 #if 1
@@ -1193,18 +1001,16 @@ static struct usb_driver pos_usb_driver = {
 #if 1
 	.suspend = pos_usb_suspend,
 	.resume = pos_usb_resume,
-	.supports_autosuspend = 1,
-#endif
+	.reset_resume = NULL,
 	.pre_reset = pos_usb_pre_reset,
 	.post_reset = pos_usb_post_reset,
 	.id_table = pos_usb_table,
+	.supports_autosuspend = 1,
+#endif
 };
 
 /* Compatible with TTY_DRIVER_DYNAMIC_DEV and TTY_DRIVER_NO_DEVFS */
 #define TTY_USB_DEV     0x0008 
-
-#ifdef LINUX_VERSION_CODE
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
 
 static int pos_port_activate(struct tty_port *port, struct tty_struct *tty)
 {
@@ -1216,12 +1022,12 @@ static void pos_port_shutdown(struct tty_port *port)
 
 }
 
-static int pos_carrier_raised(struct tty_port *port)
+static bool pos_carrier_raised(struct tty_port *port)
 {
-	return 0;
+	return true;
 }
 
-static void pos_dtr_rts(struct tty_port *port, int onoff)
+static void pos_dtr_rts(struct tty_port *port, bool on)
 {
 }
 
@@ -1231,91 +1037,75 @@ static const struct tty_port_operations pos_port_ops = {
 	.carrier_raised = pos_carrier_raised,
 	.dtr_rts	= pos_dtr_rts,
 };
-#endif
-#endif
 
 static int __init pos_tty_init(void)
 {
-	int result,i;
+    int result, i;
 
-	printk(KERN_INFO "ttyPos:%s %s\n",DRV_VERSION,VERSION_DATE);
+    printk(KERN_INFO "ttyPos:%s %s\n", DRV_VERSION, VERSION_DATE);
 
-    for(i=0;i<POS_TTY_MINORS;i++)
-		pdx_table[i] = NULL;
+    for(i=0; i<POS_TTY_MINORS; i++)
+        pdx_table[i] = NULL;
 
-	pos_tty_driver = tty_alloc_driver(POS_TTY_MINORS, 0);
-	if (IS_ERR(pos_tty_driver))
-		return PTR_ERR(pos_tty_driver);
+    pos_tty_driver = tty_alloc_driver(POS_TTY_MINORS, 
+                                     TTY_DRIVER_REAL_RAW | TTY_DRIVER_DYNAMIC_DEV);
+    if (IS_ERR(pos_tty_driver))
+        return PTR_ERR(pos_tty_driver);
 
-	pos_tty_driver->owner = THIS_MODULE;
-	pos_tty_driver->driver_name = "usbpos";
-	pos_tty_driver->name = 	"ttyPos";
-	pos_tty_driver->major = 0;//POS_TTY_MAJOR;//The major number will be chosen dynamically
-	pos_tty_driver->minor_start = 0;
-	pos_tty_driver->type = TTY_DRIVER_TYPE_SERIAL;
-	pos_tty_driver->subtype = SERIAL_TYPE_NORMAL;
-	pos_tty_driver->flags = TTY_DRIVER_REAL_RAW | TTY_USB_DEV;
-	pos_tty_driver->init_termios = tty_std_termios;
-	pos_tty_driver->init_termios.c_cflag = B9600 | CS8 | CREAD
-	    | HUPCL | CLOCAL;
+    pos_tty_driver->owner = THIS_MODULE;
+    pos_tty_driver->driver_name = "usbpos";
+    pos_tty_driver->name =   "ttyPos";
+    pos_tty_driver->major = 0; // The major number will be chosen dynamically
+    pos_tty_driver->minor_start = 0;
+    pos_tty_driver->type = TTY_DRIVER_TYPE_SERIAL;
+    pos_tty_driver->subtype = SERIAL_TYPE_NORMAL;
+    pos_tty_driver->flags = TTY_DRIVER_REAL_RAW | TTY_USB_DEV;
+    pos_tty_driver->init_termios = tty_std_termios;
+    pos_tty_driver->init_termios.c_cflag = B9600 | CS8 | CREAD | HUPCL | CLOCAL;
 
-	tty_set_operations(pos_tty_driver, &pos_ops);
+    tty_set_operations(pos_tty_driver, &pos_ops);
 
-#ifdef LINUX_VERSION_CODE
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
-	for (i = 0; i < POS_TTY_MINORS; i++) 
-    {
-		tty_port_init(&pos_port[i]);
-		pos_port[i].ops = &pos_port_ops;
-		pos_port[i].close_delay     = HZ / 2;	/* .5 seconds */
-		pos_port[i].closing_wait    = 30 * HZ;/* 30 seconds */
-	}
-#endif
-#endif
+    for (i = 0; i < POS_TTY_MINORS; i++) {
+        tty_port_init(&pos_port[i]);
+        pos_port[i].ops = &pos_port_ops;
+        pos_port[i].close_delay     = HZ / 2;    /* .5 seconds */
+        pos_port[i].closing_wait    = 30 * HZ;   /* 30 seconds */
+    }
 
-	result = tty_register_driver(pos_tty_driver);
-	if (result) {
-		ERR("%s - tty_register_driver failed\n", __func__);
-		goto byebye1;
-	}
+    result = tty_register_driver(pos_tty_driver);
+    if (result) {
+        ERR("%s - tty_register_driver failed\n", __func__);
+        goto byebye1;
+    }
 
-#ifdef LINUX_VERSION_CODE
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
     for (i = 0; i < POS_TTY_MINORS; i++)
-		tty_port_destroy(&pos_port[i]);
-#endif
-#endif
+        tty_port_destroy(&pos_port[i]);
 
-	result = usb_register(&pos_usb_driver);
-	if (result) {
-		ERR("%s - usb_register failed; err: %d\n",__func__, result);
+    result = usb_register(&pos_usb_driver);
+    if (result) {
+        ERR("%s - usb_register failed; err: %d\n",__func__, result);
         goto byebye2;
-	}
+    }
 
-    
-	return 0;
+    return 0;
+
 byebye2:
-	tty_unregister_driver(pos_tty_driver);
+    tty_unregister_driver(pos_tty_driver);
 byebye1:
     tty_driver_kref_put(pos_tty_driver);
 
-	return result;
+    return result;
 }
 
 static void __exit pos_tty_exit(void)
-{
-    unsigned int i;
-    
-	usb_deregister(&pos_usb_driver);
-	tty_unregister_driver(pos_tty_driver);
+{    
+    int i;
+    usb_deregister(&pos_usb_driver);
+    tty_unregister_driver(pos_tty_driver);
     tty_driver_kref_put(pos_tty_driver);
-
-#ifdef LINUX_VERSION_CODE
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
+    
     for (i = 0; i < POS_TTY_MINORS; i++)
-		tty_port_destroy(&pos_port[i]);
-#endif
-#endif
+        tty_port_destroy(&pos_port[i]);
 
     INFO("pos_tty_exit\n");
 }

@@ -1,26 +1,36 @@
-KERNEL_VER:=$(shell uname -r)
-KERNEL_DIR:=/lib/modules/$(KERNEL_VER)/build
-INSTALL_DIR:=/lib/modules/$(KERNEL_VER)/ttyPos
+KERNEL_VER := $(shell uname -r)
+KERNEL_DIR := /lib/modules/$(KERNEL_VER)/build
+INSTALL_DIR := /lib/modules/$(KERNEL_VER)/ttyPos
 
-ccflags-y += -Wno-error
+# Add debug flags and warnings, but suppress unused parameter warnings
+ccflags-y += -Wall -Wextra -g -Wno-unused-parameter
 obj-m := ttyPos.o
 
+# Simplified dkms target
 dkms:
-	$(MAKE) modules -C $(C) M="$(M)/$@"
+	$(MAKE) -C $(KERNEL_DIR) M=$(PWD) modules
 
+# Main build target
 all:
-	$(MAKE) modules -C $(KERNEL_DIR) M=$(shell pwd)
+	$(MAKE) -C $(KERNEL_DIR) M=$(PWD) modules
 
+# Clean target with more thorough cleanup
 clean:
-	$(RM) *.o *.ko *.mod.* .*.cmd *~
-	$(RM) -r .tmp_versions
+	$(MAKE) -C $(KERNEL_DIR) M=$(PWD) clean
+	rm -f Module.symvers Module.markers modules.order
+	rm -rf .tmp_versions
 
+# Installation target
 install: all
-	install -D -m 644 ttyPos.ko $(INSTALL_DIR)/ttyPos.ko
-	/sbin/depmod -a
-uninstall:
-	modprobe -r ttyPos ; echo -n
-	$(RM) $(INSTALL_DIR)/ttyPos.ko
+	@mkdir -p $(INSTALL_DIR)
+	install -m 644 ttyPos.ko $(INSTALL_DIR)/ttyPos.ko
 	/sbin/depmod -a
 
-.PHONY: all
+# Uninstallation target
+uninstall:
+	-/sbin/modprobe -r ttyPos
+	rm -f $(INSTALL_DIR)/ttyPos.ko
+	/sbin/depmod -a
+
+# Declare phony targets
+.PHONY: all clean install uninstall dkms

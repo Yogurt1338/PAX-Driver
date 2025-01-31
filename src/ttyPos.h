@@ -2,7 +2,6 @@
 #define _TTY_POS_H_
 
 #include <linux/module.h>
-#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/init.h>
@@ -16,12 +15,10 @@
 #include <linux/mutex.h>
 #include <linux/time.h>
 #include <linux/sched.h>
-#ifdef LINUX_VERSION_CODE
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
-#include <linux/err.h>
+#include <linux/version.h>
+#include <linux/completion.h>
 #include <linux/kthread.h>
-#endif
-#endif
+
 #define USB_VENDOR_ID		0x1234
 #define USB_PRODUCT_ID		0x0101
 
@@ -35,7 +32,7 @@ MODULE_DEVICE_TABLE(usb,pos_usb_table);
 //#define POS_TTY_MAJOR		192	/* experimental range */
 #define POS_TTY_MINORS		20	/* only have 20 devices */
 
-#define THREAD_INIT		0x00
+#define THREAD_INIT			0x00
 #define THREAD_STOPPED		0x01
 #define THREAD_CREATED		0x82
 #define THREAD_CLOSE		0x83
@@ -46,7 +43,7 @@ MODULE_DEVICE_TABLE(usb,pos_usb_table);
 #define READ_COMMAND		1	/* read from to usb device command */
 #define STATUS_COMMAND		2	/* get device buffer status command */
 
-#define POOL_SIZE		10241
+#define POOL_SIZE			10241
 
 typedef struct _POOL {
 	unsigned int ReadPos;
@@ -124,14 +121,14 @@ struct tty_pos {
 #endif
 
 //--error code define of API call
-#define USB_ERR_NOT_OPEN        (-3403)//通道未打开
-#define USB_ERR_BUF             (-3404)//发送缓冲区错误
-#define USB_ERR_NOT_FREE        (-3405)//无可用的端口
-#define USB_ERR_NO_CONF         (-3411)//设备未完成枚举和配置过程
-#define USB_ERR_DISCONN         (-3412)//设备已经与主机断开
-#define USB_ERR_MEM_SYSTEM      (-3413)//系统内存出现异常
-#define USB_ERR_BUSY            (-3414)//USB系统忙碌
-#define USB_ERR_RC_SYSTEM       (-3415)//系统资源申请失败
-#define USB_ERR_DEV_ABSENT      (-3416)//USB主机上设备不在位
-#define USB_ERR_INVALID         (-3417)//USB通讯状态无效
+#define USB_ERR_NOT_OPEN        (-3403)
+#define USB_ERR_BUF             (-3404)
+#define USB_ERR_NOT_FREE        (-3405)
+#define USB_ERR_NO_CONF         (-3411)
+#define USB_ERR_DISCONN         (-3412)
+#define USB_ERR_MEM_SYSTEM      (-3413)
+#define USB_ERR_BUSY            (-3414)
+#define USB_ERR_RC_SYSTEM       (-3415)
+#define USB_ERR_DEV_ABSENT      (-3416)
+#define USB_ERR_INVALID         (-3417)
 #endif
